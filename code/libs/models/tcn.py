@@ -85,6 +85,7 @@ class MultiStageAttentionTCN(nn.Module):
 
         self.stages = nn.ModuleList(stages)
 
+        # Attention Module
         self.attn = SingleStageTAN(n_classes, n_features, n_classes, attn_kernel, n_attn_layers, n_heads=n_heads)
 
         if n_classes == 1:
@@ -270,6 +271,8 @@ class SingleStageTAN(nn.Module):
     ) -> None:
         super().__init__()
         self.conv_in = nn.Conv1d(in_channel, n_features, 1)
+
+        # To use with different kernel sizes nor dilation
         if type(kernel_size) is list:
             assert len(kernel_size) == n_layers, "The number of kernels must be equal to the layers"
 
@@ -277,6 +280,7 @@ class SingleStageTAN(nn.Module):
                 ConvolutionalAttnLayer(n_features, n_features, kernel_size[i], groups=n_heads)
                 for i in range(n_layers)
             ]
+        # Equal kernel size for each layer and dilation mode activated
         else:
             layers = [
                 ConvolutionalAttnLayer(n_features, n_features, kernel_size, dilation = 2 ** i, groups=n_heads)
@@ -321,6 +325,7 @@ class ConvolutionalAttnLayer(nn.Module):
 
         self.rel_enc = nn.Parameter(torch.randn(out_channels, 1, kernel_size), requires_grad=True)
 
+        # Dilated Positional Encoding
         self.padded_rel_enc = self.pad_within(self.rel_enc, self.kernel_size, self.dilation)
 
         self.query_conv = nn.Conv1d(in_channels, out_channels, kernel_size=1, groups=groups)#, bias=bias)
@@ -352,10 +357,12 @@ class ConvolutionalAttnLayer(nn.Module):
         k_out = self.key_conv(padded_x)
         v_out = self.value_conv(padded_x)
 
+        # Convolutional patches
         q_out = q_out.unfold(2, 1, self.stride)                 # Query: [B, C, L, 1]
         k_out = k_out.unfold(2, self.kernel_size, self.stride)  # Keys: [B, C, L, K]
         v_out = v_out.unfold(2, self.kernel_size, self.stride)  # Values: [B, C, L, K]
 
+        # Positional encoding added
         k_out = k_out + self.padded_rel_enc
 
         if self.dilation is not 1:
@@ -368,7 +375,7 @@ class ConvolutionalAttnLayer(nn.Module):
 
         attn = (q_out * k_out).sum(dim=2, keepdims=True)
         attn = F.softmax(attn, dim=-1)
-        out = (attn*v_out).sum(dim=-1).view(batch, -1, length) # Out: [B, C, T]
+        out = (attn * v_out).sum(dim=-1).view(batch, -1, length) # Out: [B, C, T]
 
         out = F.relu(out)
         out = self.mlp(out)
